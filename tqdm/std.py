@@ -14,7 +14,6 @@ from __future__ import division
 from .utils import _supports_unicode, _environ_cols_wrapper, _range, _unich, \
     _term_move_up, _unicode, WeakSet, _basestring, _OrderedDict, _text_width, \
     Comparable, RE_ANSI, _is_ascii, SimpleTextIOWrapper, FormatReplace
-from .platform_specific import MetaReporter
 from ._monitor import TMonitor
 # native libraries
 import sys
@@ -885,7 +884,6 @@ class tqdm(Comparable):
         -------
         out  : decorated iterator.
         """
-        self._entered=0
         if write_bytes is None:
             write_bytes = file is None and sys.version_info < (3,)
 
@@ -990,7 +988,6 @@ class tqdm(Comparable):
         self._time = time
         self.bar_format = bar_format
         self.postfix = None
-        self.platform_specific_reporter = None
         if postfix:
             try:
                 self.set_postfix(refresh=False, **postfix)
@@ -1036,33 +1033,18 @@ class tqdm(Comparable):
              else getattr(self, "total", None))
 
     def __enter__(self):
-        if not self._entered:
-            self.platform_specific_reporter=MetaReporter(self.total, self.unit).__enter__()
-            self._entered+=1
         return self
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        if self._entered:
-            if self.platform_specific_reporter:
-                if exc_traceback:
-                    import traceback
-                    self.platform_specific_reporter.fail("".join(traceback.format_exception(exc_type, exc_value, exc_traceback, limit=1)))
-                elif self.total and self.n < self.total:
-                    self.platform_specific_reporter.fail("The iteration not reached its finishing amount, though no exception has been thrown.")
-                self.platform_specific_reporter.__exit__(exc_type, exc_value, exc_traceback)
-                self.platform_specific_reporter = None
-            try:
-                self.close()
-            except AttributeError:
-                # maybe eager thread cleanup upon external error
-                if (exc_type, exc_value, traceback) == (None, None, None):
-                    raise
-                warn("AttributeError ignored", TqdmWarning, stacklevel=2)
-            self._entered-=1
-            return False
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            self.close()
+        except AttributeError:
+            # maybe eager thread cleanup upon external error
+            if (exc_type, exc_value, traceback) == (None, None, None):
+                raise
+            warn("AttributeError ignored", TqdmWarning, stacklevel=2)
 
     def __del__(self):
-        self.__exit__(None, None, None)
         self.close()
 
     def __repr__(self):
@@ -1077,8 +1059,6 @@ class tqdm(Comparable):
 
     def __iter__(self):
         """Backward-compatibility to use: for x in tqdm(iterable)"""
-        if not self._entered and self.iterable:
-            self.__enter__()
 
         # Inlining instance variables as locals (speed optimisation)
         iterable = self.iterable
@@ -1160,10 +1140,6 @@ class tqdm(Comparable):
         self.last_print_n = last_print_n
         self.n = n
         self.miniters = miniters
-        if self.platform_specific_reporter:
-            self.platform_specific_reporter.success()
-            self.platform_specific_reporter.__exit__(None, None, None)
-            self.platform_specific_reporter = None
         self.close()
 
     def update(self, n=1):
@@ -1249,9 +1225,6 @@ class tqdm(Comparable):
         # Prevent multiple closures
         self.disable = True
 
-        if self.platform_specific_reporter:
-            self.platform_specific_reporter.clear()
-
         # decrement instance pos and remove from internal set
         pos = abs(self.pos)
         self._decr_instances(self)
@@ -1278,8 +1251,6 @@ class tqdm(Comparable):
                 # stats for overall rate (no weighted average)
                 self.avg_time = None
                 self.display(pos=0)
-                if self.platform_specific_reporter:
-                    self.platform_specific_reporter.clear()
                 fp_write('\n')
             else:
                 self.display(msg='', pos=pos)
@@ -1446,13 +1417,6 @@ class tqdm(Comparable):
 
         if pos:
             self.moveto(pos)
-
-        if self.platform_specific_reporter:
-            self.platform_specific_reporter.prefix(self.desc)
-            self.platform_specific_reporter.postfix(self.postfix)
-            #self.platform_specific_reporter.message(msg)
-            self.platform_specific_reporter.progress(self.n, self.avg_time)
-
         self.sp(self.__repr__() if msg is None else msg)
         if pos:
             self.moveto(-pos)
